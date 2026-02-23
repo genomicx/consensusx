@@ -37,12 +37,18 @@ export async function runConsensusx(
   )
 
   // Phase 2: Sparrowhawk de novo assembly of unmapped reads (70–88%)
-  const sparrowhawkResult = await runSparrowhawk(
-    alignResult.unmappedFastq,
-    options.minContigLength,
-    onProgress,
-    onLog,
-  )
+  let sparrowhawkResult = { fasta: '', contigCount: 0, totalLength: 0, n50: 0 }
+  try {
+    sparrowhawkResult = await runSparrowhawk(
+      alignResult.unmappedFastq,
+      options.minContigLength,
+      onProgress,
+      onLog,
+    )
+  } catch (err) {
+    onLog(`[Sparrowhawk] De novo assembly failed: ${err instanceof Error ? err.message : String(err)}`)
+    onLog('[Sparrowhawk] Continuing with reference-only consensus...')
+  }
 
   // Phase 3: Merge outputs (90–100%)
   onProgress('Merging consensus and accessory contigs...', 90)

@@ -42,6 +42,13 @@ function asString(val: unknown): string {
   return String(val)
 }
 
+/** Create a new File with spaces removed from the name (Aioli exec splits on spaces) */
+function sanitizeFile(file: File): File {
+  const safeName = file.name.replace(/\s+/g, '_')
+  if (safeName === file.name) return file
+  return new File([file], safeName, { type: file.type })
+}
+
 /**
  * Run the alignment + consensus pipeline:
  * 1. minimap2: align R1/R2 to reference
@@ -69,14 +76,19 @@ export async function runAlignment(
     { printInterleaved: false },
   )
 
+  // Sanitize filenames — Aioli exec() splits on spaces, breaking commands
+  const safeR1 = sanitizeFile(r1)
+  const safeR2 = sanitizeFile(r2)
+  const safeRef = sanitizeFile(reference)
+
   // Mount input files to the virtual filesystem
   onProgress('Mounting input files...', 8)
   onLog('[Alignment] Mounting R1, R2, and reference files...')
-  await cli.mount([r1, r2, reference])
-  // In Aioli v3, mounted files are accessible by their original filename
-  const r1Path = r1.name
-  const r2Path = r2.name
-  const refPath = reference.name
+  await cli.mount([safeR1, safeR2, safeRef])
+  // In Aioli v3, mounted files are accessible by their sanitized filename
+  const r1Path = safeR1.name
+  const r2Path = safeR2.name
+  const refPath = safeRef.name
   onLog(`[Alignment] R1: ${r1Path}`)
   onLog(`[Alignment] R2: ${r2Path}`)
   onLog(`[Alignment] Reference: ${refPath}`)
@@ -134,7 +146,7 @@ export async function runAlignment(
   // Step 7: Call consensus
   onProgress('Calling consensus...', 58)
   onLog(`[Alignment] Running samtools consensus (min-depth=${minDepth}, min-qual=${minQuality})...`)
-  const consensusCmd = `samtools consensus -a --min-depth ${minDepth} -q ${minQuality} sorted.bam -o consensus.fasta`
+  const consensusCmd = `samtools consensus -d ${minDepth} -C ${minQuality} sorted.bam -o consensus.fasta`
   const consensusResult = await cli.exec(consensusCmd)
   const consensusStderr = asString(consensusResult.stderr)
   if (consensusStderr) {

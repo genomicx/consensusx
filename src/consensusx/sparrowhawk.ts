@@ -5,13 +5,12 @@
  * genome assembler compiled to WebAssembly. It takes paired-end FASTQ input
  * and produces assembled contigs.
  *
- * Integration approach: Load the Sparrowhawk WASM module from /wasm/ in public.
- * The module provides an AssemblyHelper class:
- *   - new(file1, file2, k, verbose, min_count, min_qual, csize, do_bloom, do_fit)
- *   - get_preprocessing_info() → JSON string with k-mer histogram
- *   - assemble(no_bubble_collapse, no_dead_end_removal) → void
- *   - get_assembly() → JSON string with { outfasta, ncontigs, outgfa, ... }
+ * IMPORTANT: Sparrowhawk's wasm-bindgen-file-reader uses FileReaderSync,
+ * which is only available in Web Workers. The assembly runs in a dedicated
+ * worker thread (sparrowhawk.worker.ts).
  */
+
+import SparrowhawkWorker from './sparrowhawk.worker?worker'
 
 type LogCallback = (msg: string) => void
 type ProgressCallback = (msg: string, pct: number) => void
@@ -21,30 +20,6 @@ export interface SparrowhawkResult {
   contigCount: number
   totalLength: number
   n50: number
-}
-
-interface SparrowhawkModule {
-  AssemblyHelper: {
-    new(
-      file1: File,
-      file2: File,
-      k: number,
-      verbose: boolean,
-      min_count: number,
-      min_qual: number,
-      csize: number,
-      do_bloom: boolean,
-      do_fit: boolean,
-    ): SparrowhawkHelper
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    [key: string]: any
-  }
-}
-
-interface SparrowhawkHelper {
-  get_preprocessing_info(): string
-  assemble(no_bubble_collapse: boolean, no_dead_end_removal: boolean): void
-  get_assembly(): string
 }
 
 /**
@@ -164,7 +139,7 @@ function prefixContigHeaders(fasta: string): string {
 }
 
 /**
- * Run Sparrowhawk de novo assembly on unmapped reads.
+ * Run Sparrowhawk de novo assembly on unmapped reads via Web Worker.
  */
 export async function runSparrowhawk(
   unmappedFastq: string,
@@ -172,8 +147,8 @@ export async function runSparrowhawk(
   onProgress: ProgressCallback,
   onLog: LogCallback,
 ): Promise<SparrowhawkResult> {
-  // Check if there are enough reads to assemble
-  const readCount = (unmappedFastq.match(/@/g) || []).length
+  // Check if there are enough reads to assemble (count header lines, not all @ chars)
+  const readCount = unmappedFastq.split('\n').filter(l => l.startsWith('@')).length
   if (readCount < 10) {
     onLog('[Sparrowhawk] Too few unmapped reads for assembly, skipping')
     return { fasta: '', contigCount: 0, totalLength: 0, n50: 0 }
@@ -182,23 +157,30 @@ export async function runSparrowhawk(
   onProgress('Loading Sparrowhawk assembler...', 72)
   onLog(`[Sparrowhawk] Assembling ${readCount} unmapped reads de novo...`)
 
-  // Load the Sparrowhawk WASM module
-  let wasm: SparrowhawkModule
-  try {
-    // Dynamic import of the Sparrowhawk WASM module from public/wasm/
-    const wasmUrl = '/wasm/sparrowhawk.js'
-    const mod = await import(/* @vite-ignore */ wasmUrl)
-    wasm = mod as unknown as SparrowhawkModule
-  } catch {
-    onLog('[Sparrowhawk] WASM module not available — skipping de novo assembly')
-    onLog('[Sparrowhawk] To enable: build sparrowhawk-web WASM and place in public/wasm/')
-    return { fasta: '', contigCount: 0, totalLength: 0, n50: 0 }
+  // Cap reads to avoid WASM memory limits (4GB max)
+  let fastqForAssembly = unmappedFastq
+  const MAX_READS = 100_000
+  if (readCount > MAX_READS) {
+    onLog(`[Sparrowhawk] Subsampling unmapped reads: ${readCount} → ${MAX_READS}`)
+    const lines = unmappedFastq.split('\n')
+    const subsampledLines: string[] = []
+    let count = 0
+    for (let i = 0; i < lines.length && count < MAX_READS; i += 4) {
+      if (i + 3 >= lines.length || !lines[i].startsWith('@')) continue
+      subsampledLines.push(lines[i], lines[i + 1], lines[i + 2], lines[i + 3])
+      count++
+    }
+    fastqForAssembly = subsampledLines.join('\n') + '\n'
   }
 
   // Split unmapped reads into paired files
-  const { r1, r2 } = splitPairedReads(unmappedFastq)
+  const { r1, r2 } = splitPairedReads(fastqForAssembly)
   const r1File = fastqStringToFile(r1, 'unmapped_R1.fastq')
   const r2File = fastqStringToFile(r2, 'unmapped_R2.fastq')
+
+  const r1ReadCount = r1.split('\n').filter(l => l.startsWith('@')).length
+  const r2ReadCount = r2.split('\n').filter(l => l.startsWith('@')).length
+  onLog(`[Sparrowhawk] R1 reads: ${r1ReadCount}, R2 reads: ${r2ReadCount}`)
 
   // Sparrowhawk parameters
   const kmerSize = 31
@@ -209,54 +191,85 @@ export async function runSparrowhawk(
   onProgress('Preprocessing unmapped reads...', 75)
   onLog(`[Sparrowhawk] k=${kmerSize}, min_count=${minCount}, min_qual=${minQual}`)
 
-  // Sparrowhawk uses a static .new() factory method from the Rust WASM binding
-  const AssemblyHelper = wasm.AssemblyHelper
-  const helper: SparrowhawkHelper = AssemblyHelper.new(
-    r1File,
-    r2File,
-    kmerSize,
-    false,    // verbose
-    minCount,
-    minQual,
-    chunkSize,
-    true,     // do_bloom (Bloom filter preprocessing)
-    true,     // do_fit (auto min_count fitting)
-  )
+  // Run assembly in Web Worker (FileReaderSync only works in workers)
+  return new Promise<SparrowhawkResult>((resolve) => {
+    const worker = new SparrowhawkWorker()
 
-  const preprocessInfo = JSON.parse(helper.get_preprocessing_info())
-  onLog(`[Sparrowhawk] K-mers counted: ${preprocessInfo.nkmers.toLocaleString()}`)
-  onLog(`[Sparrowhawk] Used min_count: ${preprocessInfo.used_min_count}`)
+    const timeout = setTimeout(() => {
+      worker.terminate()
+      onLog('[Sparrowhawk] Assembly timed out after 5 minutes')
+      resolve({ fasta: '', contigCount: 0, totalLength: 0, n50: 0 })
+    }, 300_000) // 5 min timeout
 
-  // Run assembly
-  onProgress('Assembling unmapped reads...', 80)
-  onLog('[Sparrowhawk] Running de Bruijn graph assembly...')
-  helper.assemble(false, false)
+    worker.onmessage = (event: MessageEvent) => {
+      const msg = event.data
 
-  const assemblyResult = JSON.parse(helper.get_assembly())
-  onLog(`[Sparrowhawk] Assembled ${assemblyResult.ncontigs} contigs`)
+      if (msg.type === 'log') {
+        onLog(msg.message)
+        return
+      }
 
-  // Filter and prefix contigs
-  let accessoryFasta = assemblyResult.outfasta as string
-  if (!accessoryFasta || accessoryFasta.trim().length === 0) {
-    onLog('[Sparrowhawk] No contigs assembled from unmapped reads')
-    return { fasta: '', contigCount: 0, totalLength: 0, n50: 0 }
-  }
+      if (msg.type === 'error') {
+        clearTimeout(timeout)
+        worker.terminate()
+        onLog(`[Sparrowhawk] Assembly failed: ${msg.message}`)
+        onLog('[Sparrowhawk] Continuing with reference-only consensus...')
+        resolve({ fasta: '', contigCount: 0, totalLength: 0, n50: 0 })
+        return
+      }
 
-  accessoryFasta = filterContigsByLength(accessoryFasta, minContigLength)
-  accessoryFasta = prefixContigHeaders(accessoryFasta)
+      if (msg.type === 'result') {
+        clearTimeout(timeout)
+        worker.terminate()
 
-  const lengths = parseFastaLengths(accessoryFasta)
-  const totalLength = lengths.reduce((sum, l) => sum + l, 0)
-  const n50 = computeN50(lengths)
+        const outfasta = msg.outfasta as string
+        if (!outfasta || outfasta.trim().length === 0) {
+          onLog('[Sparrowhawk] No contigs assembled from unmapped reads')
+          resolve({ fasta: '', contigCount: 0, totalLength: 0, n50: 0 })
+          return
+        }
 
-  onLog(`[Sparrowhawk] Accessory contigs (>=${minContigLength} bp): ${lengths.length}`)
-  onLog(`[Sparrowhawk] Total accessory length: ${totalLength.toLocaleString()} bp`)
-  onLog(`[Sparrowhawk] Accessory N50: ${n50.toLocaleString()} bp`)
+        // Filter and prefix contigs
+        let accessoryFasta = filterContigsByLength(outfasta, minContigLength)
+        accessoryFasta = prefixContigHeaders(accessoryFasta)
 
-  return {
-    fasta: accessoryFasta,
-    contigCount: lengths.length,
-    totalLength,
-    n50,
-  }
+        const lengths = parseFastaLengths(accessoryFasta)
+        const totalLength = lengths.reduce((sum, l) => sum + l, 0)
+        const n50 = computeN50(lengths)
+
+        onLog(`[Sparrowhawk] Accessory contigs (>=${minContigLength} bp): ${lengths.length}`)
+        onLog(`[Sparrowhawk] Total accessory length: ${totalLength.toLocaleString()} bp`)
+        onLog(`[Sparrowhawk] Accessory N50: ${n50.toLocaleString()} bp`)
+
+        onProgress('Assembly complete', 88)
+        resolve({
+          fasta: accessoryFasta,
+          contigCount: lengths.length,
+          totalLength,
+          n50,
+        })
+      }
+    }
+
+    worker.onerror = (err: ErrorEvent) => {
+      clearTimeout(timeout)
+      worker.terminate()
+      onLog(`[Sparrowhawk] Worker error: ${err.message}`)
+      onLog('[Sparrowhawk] Continuing with reference-only consensus...')
+      resolve({ fasta: '', contigCount: 0, totalLength: 0, n50: 0 })
+    }
+
+    // Send assembly request to worker
+    worker.postMessage({
+      type: 'assemble',
+      r1File,
+      r2File,
+      kmerSize,
+      minCount,
+      minQual,
+      chunkSize,
+      doBloom: true,
+      doFit: true,
+    })
+  })
 }
