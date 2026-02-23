@@ -7,11 +7,12 @@ declare const Aioli: {
 }
 
 interface AioliInstance {
-  mount(files: File[]): Promise<{ path: string }[]>
-  exec(cmd: string): Promise<{ stdout: string; stderr: string }>
+  mount(files: File[]): Promise<unknown>
+  exec(cmd: string): Promise<{ stdout: string | unknown; stderr: string | unknown }>
   cat(path: string): Promise<string>
   ls(path: string): Promise<string[]>
   download(path: string): Promise<Blob>
+  mkdir(path: string): Promise<void>
 }
 
 type LogCallback = (msg: string) => void
@@ -32,6 +33,13 @@ export interface AlignmentResult {
   consensusLength: number
   nContent: number
   referenceName: string
+}
+
+/** Safely coerce exec output to string */
+function asString(val: unknown): string {
+  if (typeof val === 'string') return val
+  if (val == null) return ''
+  return String(val)
 }
 
 /**
@@ -57,17 +65,21 @@ export async function runAlignment(
   onLog('[Alignment] Loading minimap2 and samtools via Biowasm...')
 
   const cli = await new Aioli(
-    ['minimap2/2.22', 'samtools/1.10'],
+    ['minimap2/2.22', 'samtools/1.17'],
     { printInterleaved: false },
   )
 
   // Mount input files to the virtual filesystem
   onProgress('Mounting input files...', 8)
   onLog('[Alignment] Mounting R1, R2, and reference files...')
-  const [mountedR1, mountedR2, mountedRef] = await cli.mount([r1, r2, reference])
-  onLog(`[Alignment] R1: ${mountedR1.path}`)
-  onLog(`[Alignment] R2: ${mountedR2.path}`)
-  onLog(`[Alignment] Reference: ${mountedRef.path}`)
+  await cli.mount([r1, r2, reference])
+  // In Aioli v3, mounted files are accessible by their original filename
+  const r1Path = r1.name
+  const r2Path = r2.name
+  const refPath = reference.name
+  onLog(`[Alignment] R1: ${r1Path}`)
+  onLog(`[Alignment] R2: ${r2Path}`)
+  onLog(`[Alignment] Reference: ${refPath}`)
 
   // Extract reference name from filename
   const referenceName = reference.name.replace(/\.(fasta|fa|fna|fsa)(\.gz)?$/i, '')
@@ -75,10 +87,11 @@ export async function runAlignment(
   // Step 1: Align reads to reference with minimap2
   onProgress('Aligning reads to reference...', 12)
   onLog('[Alignment] Running minimap2 -ax sr (short read alignment)...')
-  const alignCmd = `minimap2 -ax sr ${mountedRef.path} ${mountedR1.path} ${mountedR2.path} -o /data/aligned.sam`
+  const alignCmd = `minimap2 -ax sr ${refPath} ${r1Path} ${r2Path} -o aligned.sam`
   const alignResult = await cli.exec(alignCmd)
-  if (alignResult.stderr) {
-    const lines = alignResult.stderr.split('\n').filter((l: string) => l.trim())
+  const alignStderr = asString(alignResult.stderr)
+  if (alignStderr) {
+    const lines = alignStderr.split('\n').filter((l: string) => l.trim())
     for (const line of lines.slice(-5)) {
       onLog(`[minimap2] ${line}`)
     }
@@ -87,23 +100,23 @@ export async function runAlignment(
   // Step 2: SAM to BAM
   onProgress('Converting SAM to BAM...', 30)
   onLog('[Alignment] Converting SAM → BAM...')
-  await cli.exec('samtools view -bS /data/aligned.sam -o /data/aligned.bam')
+  await cli.exec('samtools view -bS aligned.sam -o aligned.bam')
 
   // Step 3: Sort BAM
   onProgress('Sorting BAM...', 40)
   onLog('[Alignment] Sorting BAM by coordinate...')
-  await cli.exec('samtools sort /data/aligned.bam -o /data/sorted.bam')
+  await cli.exec('samtools sort aligned.bam -o sorted.bam')
 
   // Step 4: Index BAM
   onProgress('Indexing BAM...', 48)
   onLog('[Alignment] Indexing sorted BAM...')
-  await cli.exec('samtools index /data/sorted.bam')
+  await cli.exec('samtools index sorted.bam')
 
   // Step 5: Get flagstat for mapping statistics
   onProgress('Computing mapping statistics...', 50)
   onLog('[Alignment] Computing mapping statistics...')
-  const flagstatResult = await cli.exec('samtools flagstat /data/sorted.bam')
-  const stats = parseFlagstat(flagstatResult.stdout)
+  const flagstatResult = await cli.exec('samtools flagstat sorted.bam')
+  const stats = parseFlagstat(asString(flagstatResult.stdout))
   onLog(`[Alignment] Total reads: ${stats.totalReads}`)
   onLog(`[Alignment] Mapped: ${stats.mappedReads} (${stats.mappedPct.toFixed(1)}%)`)
   onLog(`[Alignment] Unmapped: ${stats.unmappedReads} (${stats.unmappedPct.toFixed(1)}%)`)
@@ -111,8 +124,8 @@ export async function runAlignment(
   // Step 6: Compute depth statistics
   onProgress('Computing coverage depth...', 53)
   onLog('[Alignment] Computing coverage depth...')
-  const depthResult = await cli.exec('samtools depth -a /data/sorted.bam')
-  const depthStats = parseDepth(depthResult.stdout, minDepth)
+  const depthResult = await cli.exec('samtools depth -a sorted.bam')
+  const depthStats = parseDepth(asString(depthResult.stdout), minDepth)
   onLog(`[Alignment] Mean depth: ${depthStats.meanDepth.toFixed(1)}x`)
   onLog(`[Alignment] Breadth of coverage (>=${minDepth}x): ${depthStats.breadthOfCoverage.toFixed(1)}%`)
   stats.meanDepth = depthStats.meanDepth
@@ -121,29 +134,30 @@ export async function runAlignment(
   // Step 7: Call consensus
   onProgress('Calling consensus...', 58)
   onLog(`[Alignment] Running samtools consensus (min-depth=${minDepth}, min-qual=${minQuality})...`)
-  const consensusCmd = `samtools consensus -a --min-depth ${minDepth} -q ${minQuality} /data/sorted.bam -o /data/consensus.fasta`
+  const consensusCmd = `samtools consensus -a --min-depth ${minDepth} -q ${minQuality} sorted.bam -o consensus.fasta`
   const consensusResult = await cli.exec(consensusCmd)
-  if (consensusResult.stderr) {
-    for (const line of consensusResult.stderr.split('\n').filter((l: string) => l.trim()).slice(-3)) {
+  const consensusStderr = asString(consensusResult.stderr)
+  if (consensusStderr) {
+    for (const line of consensusStderr.split('\n').filter((l: string) => l.trim()).slice(-3)) {
       onLog(`[samtools consensus] ${line}`)
     }
   }
 
-  const consensusFasta = await cli.cat('/data/consensus.fasta')
-  const { length: consensusLength, nContent } = computeConsensusStats(consensusFasta)
+  const consensusFasta = await cli.cat('consensus.fasta')
+  const { length: consensusLength, nContent } = computeConsensusStats(asString(consensusFasta))
   onLog(`[Alignment] Consensus length: ${consensusLength.toLocaleString()} bp`)
   onLog(`[Alignment] N content: ${nContent.toFixed(1)}%`)
 
   // Step 8: Extract unmapped reads
   onProgress('Extracting unmapped reads...', 65)
   onLog('[Alignment] Extracting unmapped reads from BAM...')
-  await cli.exec('samtools view -b -f 4 /data/sorted.bam -o /data/unmapped.bam')
-  await cli.exec('samtools fastq /data/unmapped.bam -1 /data/unmapped_R1.fastq -2 /data/unmapped_R2.fastq -s /data/unmapped_single.fastq')
+  await cli.exec('samtools view -b -f 4 sorted.bam -o unmapped.bam')
+  await cli.exec('samtools fastq unmapped.bam -1 unmapped_R1.fastq -2 unmapped_R2.fastq -s unmapped_single.fastq')
 
   let unmappedFastq = ''
   try {
-    const r1Unmapped = await cli.cat('/data/unmapped_R1.fastq')
-    const r2Unmapped = await cli.cat('/data/unmapped_R2.fastq')
+    const r1Unmapped = await cli.cat('unmapped_R1.fastq')
+    const r2Unmapped = await cli.cat('unmapped_R2.fastq')
     unmappedFastq = r1Unmapped + '\n' + r2Unmapped
     const unmappedReadCount = (unmappedFastq.match(/@/g) || []).length
     onLog(`[Alignment] Extracted ${unmappedReadCount} unmapped reads for de novo assembly`)
@@ -152,7 +166,7 @@ export async function runAlignment(
   }
 
   return {
-    consensusFasta,
+    consensusFasta: asString(consensusFasta),
     unmappedFastq,
     mappingStats: stats,
     consensusLength,
