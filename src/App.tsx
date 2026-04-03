@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Routes, Route } from 'react-router-dom'
-import { NavBar, AppFooter, LogConsole } from '@genomicx/ui'
-import { FileDropZone } from './components/FileDropZone'
+import { NavBar, AppFooter, LogConsole, FileUpload } from '@genomicx/ui'
 import { Settings } from './components/Settings'
 import { Results } from './components/Results'
 import { About } from './pages/About'
@@ -61,28 +60,31 @@ function AnalysisPage() {
       <div className="input-section">
         <h2 className="section-title">Input Files</h2>
         <div className="file-grid">
-          <FileDropZone
+          <FileUpload
+            files={r1File ? [r1File] : []}
+            onFilesChange={(files) => setR1File(files[0] ?? null)}
+            accept=".fastq,.fq,.fastq.gz,.fq.gz,.gz"
+            multiple={false}
             label="R1 — Forward Reads"
             hint=".fastq, .fq, .fastq.gz"
-            accept=".fastq,.fq,.fastq.gz,.fq.gz,.gz"
-            file={r1File}
-            onFileChange={setR1File}
             disabled={running}
           />
-          <FileDropZone
+          <FileUpload
+            files={r2File ? [r2File] : []}
+            onFilesChange={(files) => setR2File(files[0] ?? null)}
+            accept=".fastq,.fq,.fastq.gz,.fq.gz,.gz"
+            multiple={false}
             label="R2 — Reverse Reads"
             hint=".fastq, .fq, .fastq.gz"
-            accept=".fastq,.fq,.fastq.gz,.fq.gz,.gz"
-            file={r2File}
-            onFileChange={setR2File}
             disabled={running}
           />
-          <FileDropZone
+          <FileUpload
+            files={refFile ? [refFile] : []}
+            onFilesChange={(files) => setRefFile(files[0] ?? null)}
+            accept=".fasta,.fa,.fna,.fsa,.fasta.gz,.fa.gz,.fna.gz,.gz"
+            multiple={false}
             label="Reference Genome"
             hint=".fasta, .fa, .fna, .gz"
-            accept=".fasta,.fa,.fna,.fsa,.fasta.gz,.fa.gz,.fna.gz,.gz"
-            file={refFile}
-            onFileChange={setRefFile}
             disabled={running}
           />
         </div>
