@@ -157,7 +157,7 @@ function App() {
         </Routes>
       </main>
 
-      <AppFooter appName="consensusx" bugReportUrl="https://github.com/genomicx/consensusx/issues" />
+      <AppFooter appName="consensusx" bugReportEmail="nabil@happykhan.com" bugReportUrl="https://github.com/genomicx/consensusx/issues" />
     </div>
   )
 }
