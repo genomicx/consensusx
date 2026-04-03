@@ -8,6 +8,7 @@ import { About } from './pages/About'
 import { runConsensusx } from './consensusx/pipeline'
 import { DEFAULT_OPTIONS } from './consensusx/types'
 import type { ConsensusxOptions, ConsensusxResult } from './consensusx/types'
+import { APP_VERSION } from './lib/version'
 import './App.css'
 
 function AnalysisPage() {
@@ -140,7 +141,7 @@ function App() {
 
   return (
     <div className="app">
-      <NavBar appName="consensusx" appSubtitle="Reference-Based Consensus Assembly" githubUrl="https://github.com/genomicx/consensusx" icon={
+      <NavBar appName="consensusx" appSubtitle="Reference-Based Consensus Assembly" version={APP_VERSION} githubUrl="https://github.com/genomicx/consensusx" icon={
   <svg className="gx-nav-logo-icon" viewBox="0 0 24 24" fill="none" stroke="var(--gx-accent)" strokeWidth="2">
     {/* Stacked sequence reads → consensus */}
     <line x1="3" y1="7" x2="21" y2="7" />
