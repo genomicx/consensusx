@@ -140,7 +140,7 @@ function App() {
 
   return (
     <div className="app">
-      <NavBar appName="consensusx" appSubtitle="Reference-Based Consensus Assembly" icon={
+      <NavBar appName="consensusx" appSubtitle="Reference-Based Consensus Assembly" githubUrl="https://github.com/genomicx/consensusx" icon={
   <svg className="gx-nav-logo-icon" viewBox="0 0 24 24" fill="none" stroke="var(--gx-accent)" strokeWidth="2">
     {/* Stacked sequence reads → consensus */}
     <line x1="3" y1="7" x2="21" y2="7" />
