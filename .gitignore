@@ -1,23 +1,19 @@
-# Dependencies
-node_modules/
 
 # Build output
+# Dependencies
 dist/
-
-# IDE
-.vscode/
-.idea/
-
-# OS
 .DS_Store
-Thumbs.db
-
-# Environment
 .env
+# Environment
 .env.local
-
-# Logs
+# IDE
+.idea/
 *.log
-
-# Pixi
+# Logs
+node_modules/
+# OS
+package-lock.json
 .pixi/
+# Pixi
+Thumbs.db
+.vscode/
