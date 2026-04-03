@@ -1,4 +1,4 @@
-export function AboutPage() {
+export function About() {
   return (
     <div className="about-page">
       <section>
@@ -73,7 +73,7 @@ export function AboutPage() {
           </li>
           <li>
             Lees, J. A. et al. Sparrowhawk: a Rust-based genome assembler
-            compiled to WebAssembly.
+            compiled to WebAssembly.{' '}
             <a href="https://github.com/bacpop/sparrowhawk-web" target="_blank" rel="noopener noreferrer">
               github.com/bacpop/sparrowhawk-web
             </a>
