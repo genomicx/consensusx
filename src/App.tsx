@@ -140,7 +140,15 @@ function App() {
 
   return (
     <div className="app">
-      <NavBar appName="consensusx" appSubtitle="Reference-Based Consensus Assembly" />
+      <NavBar appName="consensusx" appSubtitle="Reference-Based Consensus Assembly" icon={
+  <svg className="gx-nav-logo-icon" viewBox="0 0 24 24" fill="none" stroke="var(--gx-accent)" strokeWidth="2">
+    {/* Stacked sequence reads → consensus */}
+    <line x1="3" y1="7" x2="21" y2="7" />
+    <line x1="5" y1="11" x2="19" y2="11" />
+    <line x1="3" y1="15" x2="21" y2="15" />
+    <line x1="7" y1="19" x2="17" y2="19" strokeWidth="2.5" stroke="var(--gx-accent)" />
+  </svg>
+} />
 
       <main className="app-main">
         <Routes>
@@ -149,7 +157,7 @@ function App() {
         </Routes>
       </main>
 
-      <AppFooter appName="consensusx" />
+      <AppFooter appName="consensusx" bugReportUrl="https://github.com/genomicx/consensusx/issues" />
     </div>
   )
 }
