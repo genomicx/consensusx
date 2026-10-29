@@ -2,6 +2,8 @@
 
 > Browser-based bacterial consensus assembly from raw sequencing reads — no server required.
 
+**Use ConsensusX:** [consensusx.genomicx.org](https://consensusx.genomicx.org)
+
 ConsensusX generates bacterial consensus sequences from raw sequencing reads entirely in your browser. It maps reads to a reference genome using minimap2, calls a consensus with samtools, then de novo assembles unmapped reads using Sparrowhawk to capture accessory genome content (plasmids, AMR genes, phage) missed by the reference. The result is a hybrid FASTA suitable for downstream analysis with MLSTx, Genetrax, and other GenomicX tools.
 
 ## Features

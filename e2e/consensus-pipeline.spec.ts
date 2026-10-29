@@ -11,7 +11,7 @@ test('full consensus pipeline produces non-zero results', async ({ page }) => {
   page.setDefaultNavigationTimeout(60_000)
 
   await page.goto('/')
-  await expect(page.locator('h1')).toContainText('Consensusx')
+  await expect(page.locator('.gx-nav')).toContainText('consensusx')
 
   // Upload R1, R2, Reference
   await page.locator('input[type="file"]').nth(0).setInputFiles(R1)
@@ -19,9 +19,9 @@ test('full consensus pipeline produces non-zero results', async ({ page }) => {
   await page.locator('input[type="file"]').nth(2).setInputFiles(REFERENCE)
 
   // Verify files are shown
-  await expect(page.locator('.file-list').nth(0)).toContainText('R1.fastq.gz')
-  await expect(page.locator('.file-list').nth(1)).toContainText('R2.fastq.gz')
-  await expect(page.locator('.file-list').nth(2)).toContainText('sequence')
+  await expect(page.locator('.gx-file-list').nth(0)).toContainText('R1.fastq.gz')
+  await expect(page.locator('.gx-file-list').nth(1)).toContainText('R2.fastq.gz')
+  await expect(page.locator('.gx-file-list').nth(2)).toContainText('sequence')
 
   // Click Run and wait for pipeline to complete
   const runButton = page.locator('button.run-button')
@@ -61,7 +61,7 @@ test('full consensus pipeline produces non-zero results', async ({ page }) => {
   expect(previewText).toContain('>')
 
   // --- Log checks ---
-  const logText = await page.locator('.log-body').textContent()
+  const logText = await page.locator('.gx-console-body').textContent()
   expect(logText).toContain('Pipeline complete')
   expect(logText).not.toContain('unrecognized command')
 
